@@ -45,7 +45,9 @@ function withTempConfig(fn) {
   const previousXdg = process.env.XDG_CONFIG_HOME;
   const previousHide = process.env.PONYTAIL_HIDE_STATUS;
   const previousDefault = process.env.PONYTAIL_DEFAULT_MODE;
+  const previousSession = process.env.PONYTAIL_SESSION_MODE;
   process.env.XDG_CONFIG_HOME = tempConfigHome;
+  delete process.env.PONYTAIL_SESSION_MODE;
   delete process.env.PONYTAIL_HIDE_STATUS;
   delete process.env.PONYTAIL_DEFAULT_MODE;
 
@@ -58,6 +60,8 @@ function withTempConfig(fn) {
       else process.env.PONYTAIL_HIDE_STATUS = previousHide;
       if (previousDefault === undefined) delete process.env.PONYTAIL_DEFAULT_MODE;
       else process.env.PONYTAIL_DEFAULT_MODE = previousDefault;
+      if (previousSession === undefined) delete process.env.PONYTAIL_SESSION_MODE;
+      else process.env.PONYTAIL_SESSION_MODE = previousSession;
       rmSync(tempConfigHome, { recursive: true, force: true });
     });
 }
@@ -400,5 +404,48 @@ describe("codebase map", () => {
     rmSync(cwd, { recursive: true, force: true });
     assert.ok(prompt.includes("PONYTAIL MODE ACTIVE"), "the rules are still injected");
     assert.ok(!prompt.includes("Codebase map"), "the map is left out");
+  }));
+});
+
+describe("subagent mode", () => {
+  async function promptAfterStart(reason, entries = []) {
+    const { events } = createPiHarness();
+    const ctx = createCommandContext({ sessionManager: { getEntries: () => entries } });
+    await events.get("session_start")({ reason }, ctx);
+    return (await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx))?.systemPrompt ?? "";
+  }
+
+  test("should start in the spawner's mode when a fresh session inherits PONYTAIL_SESSION_MODE", async () => withTempConfig(async () => {
+    process.env.PONYTAIL_SESSION_MODE = "ultra";
+
+    const prompt = await promptAfterStart("startup");
+
+    assert.ok(prompt.includes("level: ultra"), "the subagent runs in the spawner's ultra mode");
+  }));
+
+  test("should use the default mode when /new starts a session after another mode", async () => withTempConfig(async () => {
+    process.env.PONYTAIL_SESSION_MODE = "ultra";
+
+    const prompt = await promptAfterStart("new");
+
+    assert.ok(prompt.includes("level: full"), "a new session starts in the default full mode");
+  }));
+
+  test("should keep the session's own mode when it saved one", async () => withTempConfig(async () => {
+    process.env.PONYTAIL_SESSION_MODE = "ultra";
+
+    const prompt = await promptAfterStart("startup", [{ type: "custom", customType: "ponytail-mode", data: { mode: "lite" } }]);
+
+    assert.ok(prompt.includes("level: lite"), "the session's own lite mode wins over the inherited one");
+  }));
+
+  test("should pass a /ponytail change on to later subagents when the mode is set", async () => withTempConfig(async () => {
+    const { commands, events } = createPiHarness();
+    const ctx = createCommandContext();
+    await events.get("session_start")({ reason: "startup" }, ctx);
+
+    await commands.get("ponytail").handler("ultra", ctx);
+
+    assert.equal(process.env.PONYTAIL_SESSION_MODE, "ultra", "subagents spawned from now on inherit ultra");
   }));
 });
