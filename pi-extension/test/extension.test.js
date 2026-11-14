@@ -367,38 +367,38 @@ test("/ponytail autocompletes modes, commands and default <mode>", () => {
 });
 
 describe("codebase map", () => {
-  async function promptAfterMap(cwd, tries = 60) {
+  async function firstPrompt(cwd, event = "session_start") {
     const { events } = createPiHarness();
     const ctx = createCommandContext({ cwd });
-    await events.get("session_start")({ reason: "startup" }, ctx);
-    let prompt = "";
-    for (let i = 0; i < tries && !prompt.includes("Codebase map"); i++) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      prompt = (await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx)).systemPrompt;
-    }
-    return prompt;
+    await events.get(event)({ reason: "startup" }, ctx);
+    return (await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx)).systemPrompt;
   }
 
-  test("should add the project's map to the prompt when the session starts in a project", async () => withTempConfig(async () => {
+  function withProject(fn) {
     const cwd = mkdtempSync(join(tmpdir(), "ponytail-map-"));
     writeFileSync(join(cwd, "util.js"), "export function slugify() {}\n");
+    return Promise.resolve(cwd).then(fn).finally(() => rmSync(cwd, { recursive: true, force: true }));
+  }
 
-    const prompt = await promptAfterMap(cwd);
+  test("should add the project's map to the first prompt when the session starts in a project", async () => withTempConfig(() => withProject(async (cwd) => {
+    const prompt = await firstPrompt(cwd);
 
-    rmSync(cwd, { recursive: true, force: true });
-    assert.ok(prompt.includes("Codebase map"), "the prompt carries the codebase map");
+    assert.ok(prompt.includes("Codebase map"), "the first prompt carries the codebase map");
     assert.ok(prompt.includes("slugify"), "the map lists the project's exports");
-  }));
+  })));
 
-  test("should leave the map out when PONYTAIL_MAP is 0", async () => withTempConfig(async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "ponytail-map-"));
-    writeFileSync(join(cwd, "util.js"), "export function slugify() {}\n");
+  test("should build the map for the new project when OMP switches sessions", async () => withTempConfig(() => withProject(async (cwd) => {
+    const prompt = await firstPrompt(cwd, "session_switch");
+
+    assert.ok(prompt.includes("slugify"), "the switched-to project's exports are in the map");
+  })));
+
+  test("should leave the map out when PONYTAIL_MAP is 0", async () => withTempConfig(() => withProject(async (cwd) => {
     process.env.PONYTAIL_MAP = "0";
 
-    const prompt = await promptAfterMap(cwd, 10).finally(() => delete process.env.PONYTAIL_MAP);
+    const prompt = await firstPrompt(cwd).finally(() => delete process.env.PONYTAIL_MAP);
 
-    rmSync(cwd, { recursive: true, force: true });
     assert.ok(prompt.includes("PONYTAIL MODE ACTIVE"), "the rules are still injected");
     assert.ok(!prompt.includes("Codebase map"), "the map is left out");
-  }));
+  })));
 });
