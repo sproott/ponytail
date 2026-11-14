@@ -439,6 +439,32 @@ describe("subagent mode", () => {
     assert.ok(prompt.includes("level: lite"), "the session's own lite mode wins over the inherited one");
   }));
 
+  test("should keep an inherited mode when the session reloads", async () => withTempConfig(async () => {
+    process.env.PONYTAIL_SESSION_MODE = "ultra";
+    const { events } = createPiHarness();
+    const ctx = createCommandContext();
+    await events.get("session_start")({ reason: "startup" }, ctx);
+
+    await events.get("session_start")({ reason: "reload" }, ctx);
+    const prompt = (await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx)).systemPrompt;
+
+    assert.ok(prompt.includes("level: ultra"), "the nested session stays in the ultra mode it inherited");
+  }));
+
+  test("should start a same-process subagent in the parent's mode when the parent set one", async () => withTempConfig(async () => {
+    const parent = createPiHarness();
+    const parentCtx = createCommandContext();
+    await parent.events.get("session_start")({ reason: "startup" }, parentCtx);
+    await parent.commands.get("ponytail").handler("ultra", parentCtx);
+    const subagent = createPiHarness();
+    const subagentCtx = createCommandContext();
+
+    await subagent.events.get("session_start")({ reason: "startup" }, subagentCtx);
+    const prompt = (await subagent.events.get("before_agent_start")({ systemPrompt: "BASE" }, subagentCtx)).systemPrompt;
+
+    assert.ok(prompt.includes("level: ultra"), "the subagent runs in the parent's ultra mode");
+  }));
+
   test("should pass a /ponytail change on to later subagents when the mode is set", async () => withTempConfig(async () => {
     const { commands, events } = createPiHarness();
     const ctx = createCommandContext();

@@ -213,7 +213,8 @@ export default function ponytailExtension(pi) {
     configuredDefaultMode = getDefaultMode();
     hideStatus = getHideStatus();
     // /new, /resume and /fork start from this session's own entries, never the previous session's mode.
-    restoreSessionMode(ctx, (event?.reason ?? "startup") === "startup");
+    // /reload keeps it: the variable then holds this session's mode, which a nested pi never saved.
+    restoreSessionMode(ctx, ["startup", "reload"].includes(event?.reason ?? "startup"));
     loadMap(ctx);
     if (!getQuietStartup()) {
       ctx?.ui?.notify?.(`Ponytail loaded: ${currentMode}`, "info");
