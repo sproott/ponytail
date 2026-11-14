@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { describe } from "node:test";
 
 import ponytailExtension, { parsePonytailCommand } from "../index.js";
 
@@ -364,4 +364,41 @@ test("/ponytail autocompletes modes, commands and default <mode>", () => {
   for (const { value } of complete("")) {
     assert.notEqual(parsePonytailCommand(value).type, "invalid", `Enter on "${value}" must run a valid command`);
   }
+});
+
+describe("codebase map", () => {
+  async function promptAfterMap(cwd, tries = 60) {
+    const { events } = createPiHarness();
+    const ctx = createCommandContext({ cwd });
+    await events.get("session_start")({ reason: "startup" }, ctx);
+    let prompt = "";
+    for (let i = 0; i < tries && !prompt.includes("Codebase map"); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      prompt = (await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx)).systemPrompt;
+    }
+    return prompt;
+  }
+
+  test("should add the project's map to the prompt when the session starts in a project", async () => withTempConfig(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ponytail-map-"));
+    writeFileSync(join(cwd, "util.js"), "export function slugify() {}\n");
+
+    const prompt = await promptAfterMap(cwd);
+
+    rmSync(cwd, { recursive: true, force: true });
+    assert.ok(prompt.includes("Codebase map"), "the prompt carries the codebase map");
+    assert.ok(prompt.includes("slugify"), "the map lists the project's exports");
+  }));
+
+  test("should leave the map out when PONYTAIL_MAP is 0", async () => withTempConfig(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ponytail-map-"));
+    writeFileSync(join(cwd, "util.js"), "export function slugify() {}\n");
+    process.env.PONYTAIL_MAP = "0";
+
+    const prompt = await promptAfterMap(cwd, 10).finally(() => delete process.env.PONYTAIL_MAP);
+
+    rmSync(cwd, { recursive: true, force: true });
+    assert.ok(prompt.includes("PONYTAIL MODE ACTIVE"), "the rules are still injected");
+    assert.ok(!prompt.includes("Codebase map"), "the map is left out");
+  }));
 });

@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const {
@@ -76,6 +78,8 @@ export default function ponytailExtension(pi) {
   let hideStatus = getHideStatus();
   let isActive = false;
   let lastCtx = null;
+  let map = "";
+  let mapRun = 0;
 
   // -- Status bar --
   function syncStatus(ctx) {
@@ -204,6 +208,7 @@ export default function ponytailExtension(pi) {
     configuredDefaultMode = getDefaultMode();
     hideStatus = getHideStatus();
     restoreSessionMode(ctx);
+    loadMap(ctx);
     if (!getQuietStartup()) {
       ctx?.ui?.notify?.(`Ponytail loaded: ${currentMode}`, "info");
     }
@@ -227,13 +232,25 @@ export default function ponytailExtension(pi) {
     syncStatus(ctx);
   });
 
+  // Same map and limits as the Claude Code SessionStart hook; built off the startup path, so the
+  // first run may go without it.
+  function loadMap(ctx) {
+    const run = ++mapRun;
+    map = "";
+    if (process.env.PONYTAIL_MAP === "0") return;
+    const script = fileURLToPath(new URL("../hooks/ponytail-map.js", import.meta.url));
+    execFile(process.execPath, [script, ctx?.cwd || process.cwd()], { timeout: 3000, maxBuffer: 64 * 1024 }, (error, stdout) => {
+      if (!error && run === mapRun) map = String(stdout).trimEnd();
+    });
+  }
+
   pi.on("before_agent_start", async (event) => {
     if (!currentMode || currentMode === "off") {
       // Clear a stale section when the mode is off so a previous turn does not linger (#953).
       if (event?.systemPromptOptions?.sections) delete event.systemPromptOptions.sections.ponytail;
       return;
     }
-    const instructions = getPonytailInstructions(currentMode);
+    const instructions = getPonytailInstructions(currentMode) + (map && currentMode !== "review" ? `\n\n${map}` : "");
     // Prefer structured sections so Pi can keep the cached prefix when other
     // extensions change their own section (#953). Fall back to replacement
     // for older Pi versions without systemPromptOptions.sections.
